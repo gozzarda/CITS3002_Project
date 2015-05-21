@@ -1,0 +1,78 @@
+#include "../common.hpp"
+#include <thread>
+
+struct config {
+	std::string port = "30021";
+	int listen_queue_len = 32;
+	std::string trustfile = "root.crt";
+	std::string certfile = "self.crt";
+	std::string keyfile = "self.key";	
+};
+config conf;
+
+void handle(SSL* ssl) {
+	if (SSL_accept(ssl) == -1) {
+		ERR_print_errors_fp(stderr);
+	} else {
+		X509* cert;
+		cert = SSL_get_peer_certificate(ssl);
+		if (cert != NULL) {
+			char str_ou[16] = {'\0'};
+			X509_NAME_get_text_by_NID(X509_get_subject_name(cert), OBJ_txt2nid("OU"), str_ou, sizeof(str_ou)-1);
+			printf("Incoming connection from %s\n", str_ou);
+		}
+		char buf[1024] = {'\0'};
+		int len = SSL_read(ssl, buf, sizeof(buf));
+		if (len > 0) {
+			printf("Client msg: \"%s\"\n", buf);
+			std::string reply = "It works!";
+			SSL_write(ssl, reply.c_str(), reply.length());
+		} else {
+			fprintf(stderr, "Failed to receive client message\n");
+			ERR_print_errors_fp(stderr);
+		}
+	}
+
+	int cfd = SSL_get_fd(ssl);
+	SSL_free(ssl);
+	close(cfd);
+}
+
+int main(int argc, char *argv[]) {
+	SSL_library_init();
+	OpenSSL_add_all_algorithms();
+	SSL_load_error_strings();
+
+	SSL_CTX *ctx = SSL_CTX_new(SSLv3_server_method());
+	if (ctx == NULL) {
+		fprintf(stderr, "Failed to initialize SSL context\n");
+		ERR_print_errors_fp(stderr);
+		exit(EXIT_FAILURE);
+	}
+
+	if (load_certs(ctx, conf.trustfile.c_str(), conf.certfile.c_str(), conf.keyfile.c_str()) != 0) {
+		SSL_CTX_free(ctx);
+		exit(EXIT_FAILURE);
+	}
+
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+
+	int sfd = open_listen(conf.port.c_str(), conf.listen_queue_len);
+	if (sfd < 0) {
+		SSL_CTX_free(ctx);
+		exit(EXIT_FAILURE);
+	}
+
+	while (true) {
+		int cfd = accept(sfd, NULL, NULL);
+		SSL *ssl;
+		ssl = SSL_new(ctx);
+		SSL_set_fd(ssl, cfd);
+		handle(ssl);
+	}
+
+	close(sfd);
+	SSL_CTX_free(ctx);
+
+	return 0;
+}

@@ -1,0 +1,5 @@
+openssl req -new -newkey rsa:4096 -keyform PEM -keyout self.key -outform PEM -out self.csr -nodes
+
+openssl x509 -days 3650 -CA ../rootca/root.crt -CAkey ../rootca/root.key -req -in self.csr -outform PEM -out self.crt -CAserial ../rootca/root.ser
+
+openssl x509 -inform pem -in self.crt -pubkey -noout > self.pub
