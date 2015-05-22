@@ -13,17 +13,17 @@ struct config {
 };
 config conf;
 
-idkeeper ecids(conf.ecidfile);
+idkeeper ecids;
 EVP_PKEY *privkey;
 EVP_PKEY *pubkey;
 
-void handle_ecent_request(SSL* ssl, std::string imsg) {
+void handle_ecent_purchase_request(SSL* ssl, std::string imsg) {
 	std::stringstream ssi(imsg);
-	ecent_request req;
+	ecent_purchase_request req;
 	ssi >> req;
-	if (ssi.fail()) throw "Failed to parse ECENT_REQUEST";
+	if (ssi.fail()) throw "Failed to parse eCent purchase request";
 	std::vector<uint64_t> ids = ecids.new_ids(req.count);
-	ecent_response res;
+	ecent_purchase_response res;
 	for (auto id : ids) {
 		res.ecents.push_back(ecent(id, privkey));
 	}
@@ -38,6 +38,20 @@ void handle_ecent_request(SSL* ssl, std::string imsg) {
 	}
 }
 
+void handle_ecent_validate_request(SSL* ssl, std::string imsg) {
+	std::stringstream ssi(imsg);
+	ecent_validate_request req;
+	ssi >> req;
+	if (ssi.fail()) throw "Failed to parse eCent validation request";
+	ecent_validate_response res(ecids.check_id(req.ec.ecid));
+	std::stringstream sso;
+	sso << res;
+	std::string omsg = sso.str();
+	if (SSL_write(ssl, omsg.c_str(), omsg.length()) < 0) {
+		fprintf(stderr, "Failed to send eCent validation response\n");
+	}
+}
+
 void handle_request(SSL* ssl) {
 	try {
 		if (SSL_accept(ssl) == -1) {
@@ -45,14 +59,16 @@ void handle_request(SSL* ssl) {
 		} else {
 			X509* cert;
 			cert = SSL_get_peer_certificate(ssl);
+			std::string client_ou;
 			if (cert != NULL) {
-				char str_ou[16] = {'\0'};
-				X509_NAME_get_text_by_NID(X509_get_subject_name(cert), OBJ_txt2nid("OU"), str_ou, sizeof(str_ou)-1);
-				printf("Incoming connection from %s\n", str_ou);
+				char ou_buf[1024] = {'\0'};
+				X509_NAME_get_text_by_NID(X509_get_subject_name(cert), OBJ_txt2nid("OU"), ou_buf, sizeof(ou_buf)-1);
+				printf("Incoming connection from %s\n", ou_buf);
+				client_ou = ou_buf;
 			}
 			X509_free(cert);
 
-			std::string str;
+			std::string imsg;
 			while (true) {
 				char buf[1024] = {'\0'};
 				int len = SSL_read(ssl, buf, sizeof(buf));
@@ -63,30 +79,33 @@ void handle_request(SSL* ssl) {
 				std::string buf_str(buf, len);
 				size_t pos = buf_str.find_first_of(TERMCHAR);
 				if (pos != std::string::npos) {
-					str.append(buf_str, 0, pos+1);
+					imsg.append(buf_str, 0, pos+1);
 					break;
 				} else {
-					str.append(buf_str);
+					imsg.append(buf_str);
 				}
 			}
 
-			std::stringstream ss(str);
+			std::stringstream ssi(imsg);
 			std::string msgtype;
-			ss >> msgtype;
+			ssi >> msgtype;
 			if (msgtype != "REQUEST") throw "Unsupported message type";
 			int msgcode;
-			ss >> msgcode;
-			ss.seekg(0);
+			ssi >> msgcode;
+			ssi.seekg(0);
 
-			if (msgcode == CODE_ECENT_REQUEST) {
-				handle_ecent_request(ssl, str);
+			printf("%s %d\n", msgtype.c_str(), msgcode);
+			if (msgcode == ECENT_PURCHASE_REQUEST) {
+				handle_ecent_purchase_request(ssl, imsg);
+			} else if (msgcode == ECENT_VALIDATE_REQUEST) {
+				handle_ecent_validate_request(ssl, imsg);
 			} else {
 				throw "Unsupported message code";
 			}
 		}
 	} catch(const char* errmsg) {
 		fprintf(stderr, "%s\n", errmsg);
-		char* sslerr = (char*)malloc(strlen("ERROR ") + strlen(errmsg) + 2);
+		char* sslerr = (char*)malloc(strlen("ERROR ") + strlen(errmsg) + 16);
 		sprintf(sslerr, "ERROR %s;", errmsg);
 		SSL_write(ssl, sslerr, strlen(sslerr));
 		free(sslerr);
@@ -144,6 +163,7 @@ int main(int argc, char *argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
+	ecids.idfile = conf.ecidfile;
 	ecids.load();
 
 	while (true) {

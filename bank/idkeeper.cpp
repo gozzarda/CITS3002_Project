@@ -24,7 +24,7 @@ struct idkeeper {
 		std::ifstream ifs(file);
 		int count = 0;
 		ifs >> count;
-		if (count == 1) {
+		if (count == 0) {
 			idkeeper();
 		} else {
 			while (read.size() < count && !ifs.fail()) {
@@ -62,7 +62,7 @@ struct idkeeper {
 				start = 0;
 				end = count;
 				ids.push_back(std::pair<uint64_t, uint64_t>(0, count));
-			} else if (ids.back().second + count < ids.front().first) {
+			} else if (ids.front().second - ids.front().first <= ids.back().second - ids.front().first && ids.back().second - ids.back().first <= ids.front().second - ids.back().first) {
 				start = ids.back().second;
 				end = ids.back().second + count;
 				ids.back().second = end;

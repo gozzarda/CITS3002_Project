@@ -1,6 +1,8 @@
 #ifndef COMMON_HPP
 #define COMMON_HPP
 
+//#define DEBUG
+
 #include <cstdio>
 #include <iostream>
 #include <string>

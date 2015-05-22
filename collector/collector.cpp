@@ -1,6 +1,8 @@
 #include "../common.hpp"
 
 struct config {
+	std::string bankhost = "localhost";
+	std::string bankport = "30021";
 	std::string trustfile = "root.crt";
 	std::string certfile = "self.crt";
 	std::string keyfile = "self.key";
@@ -8,9 +10,11 @@ struct config {
 };
 config conf;
 
-std::vector<ecent> load_ecents() {
+std::vector<ecent> ecents;
+
+void load_ecents(std::string file) {
 	std::vector<ecent> ecs;
-	std::ifstream ifs(conf.ecentfile);
+	std::ifstream ifs(file);
 	int count;
 	ifs >> count;
 	while (ecs.size() < count) {
@@ -18,74 +22,124 @@ std::vector<ecent> load_ecents() {
 		ifs >> ec;
 		ecs.push_back(ec);
 	}
-	return ecs;
+	if (!ifs.fail())
+		ecents = ecs;
 }
 
-void save_ecents(std::vector<ecent> ecs) {
-	std::ofstream ofs(conf.ecentfile);
-	ofs << ecs.size() << std::endl;
-	for (auto ec : ecs) {
+void save_ecents(std::string file) {
+	std::ofstream ofs(file);
+	ofs << ecents.size() << std::endl;
+	for (auto ec : ecents) {
 		ofs << ec;
 	}
 }
 
-int get_ecents(SSL_CTX *ctx, std::string host, std::string port, int count) {
+std::string do_request(SSL_CTX *ctx, std::string host, std::string port, std::string reqmsg) {
+	std::string resmsg;
+
 	int sfd = open_connect(host.c_str(), port.c_str());
+	if (sfd < 0) {
+		fprintf(stderr, "Failed to open_connect\n");
+		return resmsg;
+	}
 
 	SSL *ssl;
 	ssl = SSL_new(ctx);
+	if (ssl == NULL) {
+		fprintf(stderr, "Failed to SSL_new\n");
+		close(sfd);
+		return resmsg;
+	}
 	SSL_set_fd(ssl, sfd);
 
-	if (SSL_connect(ssl) == -1) {
-		fprintf(stderr, "Failed to SSL_connect()\n");
-		ERR_print_errors_fp(stderr);
-		count = -1;
-	} else {
-		ecent_request req(count);
-		std::stringstream sso;
-		sso << req;
-		std::string str = sso.str();
-		SSL_write(ssl, str.c_str(), str.length());
+	try {
+		if (SSL_connect(ssl) == -1) {
+			ERR_print_errors_fp(stderr);
+			throw "Failed to SSL_connect";
+		}
 
-		str.clear();
+		if (SSL_write(ssl, reqmsg.c_str(), reqmsg.length()) < 0) {
+			throw "Failed to SSL_write";
+		}
+
 		while (true) {
 			char buf[1024] = {'\0'};
 			int len = SSL_read(ssl, buf, sizeof(buf));
 			if (len < 0) {
 				ERR_print_errors_fp(stderr);
-				count = -1;
-				break;
+				throw "Failed to SSL_read";
 			}
 			std::string buf_str(buf, len);
 			size_t pos = buf_str.find_first_of(TERMCHAR);
 			if (pos != std::string::npos) {
-				str.append(buf_str, 0, pos + 1);
+				resmsg.append(buf_str, 0, pos + 1);
 				break;
 			} else {
-				str.append(buf_str);
+				resmsg.append(buf_str);
 			}
 		}
-
-		if (count != -1) {
-			std::stringstream ssi(str);
-			ecent_response res;
-			ssi >> res;
-			if (ssi.fail()) count = -1;
-			else {
-				count = res.ecents.size();
-				std::vector<ecent> ecs = load_ecents();
-				for (auto ec : res.ecents) {
-					ecs.push_back(ec);
-				}
-				save_ecents(ecs);
-			}
-		}
+	} catch (const char* errmsg) {
+		resmsg.clear();
+		fprintf(stderr, "%s\n", errmsg);
+		char* sslerr = (char*)malloc(strlen("ERROR ") + strlen(errmsg) + 16);
+		sprintf(sslerr, "ERROR %s;", errmsg);
+		SSL_write(ssl, sslerr, strlen(sslerr));
+		free(sslerr);
 	}
 
 	SSL_free(ssl);
 	close(sfd);
 
+#ifdef DEBUG
+	fprintf(stderr, "do_request():\nSENT:\n%s\nRECEIVED:\n%s\n", reqmsg.c_str(), resmsg.c_str());
+#endif
+
+	return resmsg;
+}
+
+
+int get_ecents(SSL_CTX *ctx, std::string host, std::string port, int count) {
+	ecent_purchase_request req(count);
+	std::stringstream sso;
+	sso << req;
+	std::string reqmsg = sso.str();
+
+	std::string resmsg = do_request(ctx, host, port, reqmsg);
+
+	if (resmsg.empty()) return -1;
+
+	std::stringstream ssi(resmsg);
+	ecent_purchase_response res;
+	ssi >> res;
+	if (ssi.fail()) return -1;
+	count = res.ecents.size();
+	for (auto ec : res.ecents) {
+		ecents.push_back(ec);
+	}
+	save_ecents(conf.ecentfile);
+
 	return count;
+}
+
+int check_ecent(SSL_CTX *ctx, std::string host, std::string port, ecent ec) {
+	ecent_validate_request req(ec);
+	std::stringstream sso;
+	sso << req;
+	std::string reqmsg = sso.str();
+
+	std::string resmsg = do_request(ctx, host, port, reqmsg);
+
+	if (resmsg.empty()) return -1;
+
+	std::stringstream ssi(resmsg);
+	ecent_validate_response res;
+	ssi >> res;
+	if (ssi.fail()) return -2;
+	if (res.isvalid) {
+		return 1;
+	} else {
+		return 0;
+	}
 }
 
 int main(int argc, char *argv[]) {
@@ -107,6 +161,8 @@ int main(int argc, char *argv[]) {
 
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
 
+	load_ecents(conf.ecentfile);
+
 	bool cmd_loop = true;
 	while (cmd_loop) {
 		std::string cmd;
@@ -117,8 +173,29 @@ int main(int argc, char *argv[]) {
 			std::string host, port;
 			int count;
 			std::cin >> host >> port >> count;
+			if (host == ".") host = conf.bankhost;
+			if (port == ".") port = conf.bankport;
 			count = get_ecents(ctx, host, port, count);
 			std::cout << "Got " << count << " eCents" << std::endl;
+		} else if (cmd == "ecent_count") {
+			std::cout << "Currently have " << ecents.size() << " ecents" << std::endl;
+		} else if (cmd == "check_ecent") {
+			std::string host, port;
+			std::cin >> host >> port;
+			if (host == ".") host = conf.bankhost;
+			if (port == ".") port = conf.bankport;
+			if (ecents.size() < 1) {
+				std::cout << "No ecent to validate" << std::endl;
+			} else {
+				int res = check_ecent(ctx, host, port, ecents.front());
+				if (res == 1) {
+					std::cout << "First ecent is valid" << std::endl;
+				} else if (res == 0) {
+					std::cout << "First ecent is INVALID" << std::endl;
+				} else {
+					std::cout << "Failed to validate eCent with error code " << res << std::endl;
+				}
+			}
 		}
 	}
 
