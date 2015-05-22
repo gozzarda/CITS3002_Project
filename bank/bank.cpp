@@ -43,12 +43,30 @@ void handle_ecent_validate_request(SSL* ssl, std::string imsg) {
 	ecent_validate_request req;
 	ssi >> req;
 	if (ssi.fail()) throw "Failed to parse eCent validation request";
-	ecent_validate_response res(ecids.check_id(req.ec.ecid));
+	bool val = ecids.check_id(req.ec.ecid) && (req.ec.verify_sig(pubkey) == 1);
+	ecent_validate_response res(val);
 	std::stringstream sso;
 	sso << res;
 	std::string omsg = sso.str();
 	if (SSL_write(ssl, omsg.c_str(), omsg.length()) < 0) {
 		fprintf(stderr, "Failed to send eCent validation response\n");
+	}
+}
+
+void handle_ecent_redeem_request(SSL* ssl, std::string imsg) {
+	std::stringstream ssi(imsg);
+	ecent_redeem_request req;
+	ssi >> req;
+	if (ssi.fail()) throw "Failed to parse eCent redemption request";
+	bool val = ecids.check_id(req.ec.ecid) && (req.ec.verify_sig(pubkey) == 1);
+	ecent_redeem_response res(val);
+	std::stringstream sso;
+	sso << res;
+	std::string omsg = sso.str();
+	if (SSL_write(ssl, omsg.c_str(), omsg.length()) < 0) {
+		fprintf(stderr, "Failed to send eCent validation response\n");
+	} else if (val) {
+		ecids.remove_id(req.ec.ecid);
 	}
 }
 
@@ -99,6 +117,8 @@ void handle_request(SSL* ssl) {
 				handle_ecent_purchase_request(ssl, imsg);
 			} else if (msgcode == ECENT_VALIDATE_REQUEST) {
 				handle_ecent_validate_request(ssl, imsg);
+			} else if (msgcode == ECENT_REDEEM_REQUEST) {
+				handle_ecent_redeem_request(ssl, imsg);
 			} else {
 				throw "Unsupported message code";
 			}

@@ -144,6 +144,7 @@ struct idkeeper {
 				}
 			}
 		}
+		save();
 		mtx.unlock();
 		return ret;
 	}

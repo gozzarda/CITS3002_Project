@@ -10,6 +10,8 @@
 #define ECENT_PURCHASE_RESPONSE 101
 #define ECENT_VALIDATE_REQUEST 110
 #define ECENT_VALIDATE_RESPONSE 111
+#define ECENT_REDEEM_REQUEST 120
+#define ECENT_REDEEM_RESPONSE 121
 
 typedef uint16_t code_t;
 typedef unsigned char byte;
@@ -226,6 +228,73 @@ struct ecent_validate_response {
 		return os;
 	}
 	friend std::istream& operator>>(std::istream& is, ecent_validate_response& res) {
+		std::string res_str;
+		is >> res_str;
+		if (res_str != RESSTR)
+			is.setstate(std::ios::failbit);
+		
+		code_t incode;
+		is >> incode;
+		if (incode != res.code)
+			is.setstate(std::ios::failbit);
+
+		is >> res.ecid >> res.isvalid;
+
+		char end_char;
+		is >> end_char;
+		if (end_char != TERMCHAR)
+			is.setstate(std::ios::failbit);
+
+		return is;
+	}
+};
+
+struct ecent_redeem_request {
+	const code_t code = ECENT_REDEEM_REQUEST;
+	ecent ec;
+	ecent_redeem_request() {}
+	ecent_redeem_request(ecent ec) : ec(ec) {}
+	friend std::ostream& operator<<(std::ostream& os, const ecent_redeem_request& req) {
+		os << REQSTR << " " << req.code << std::endl;
+		os << req.ec << std::endl;
+		os << TERMCHAR << std::endl;
+		return os;
+	}
+	friend std::istream& operator>>(std::istream& is, ecent_redeem_request& req) {
+		std::string req_str;
+		is >> req_str;
+		if (req_str != REQSTR)
+			is.setstate(std::ios::failbit);
+		
+		code_t incode;
+		is >> incode;
+		if (incode != req.code)
+			is.setstate(std::ios::failbit);
+
+		is >> req.ec;
+
+		char end_char;
+		is >> end_char;
+		if (end_char != TERMCHAR)
+			is.setstate(std::ios::failbit);
+
+		return is;
+	}
+};
+
+struct ecent_redeem_response {
+	const code_t code = ECENT_REDEEM_RESPONSE;
+	uint64_t ecid = 0;
+	bool isvalid = false;
+	ecent_redeem_response() {}
+	ecent_redeem_response(bool val) : isvalid(val) {}
+	friend std::ostream& operator<<(std::ostream& os, const ecent_redeem_response& res) {
+		os << RESSTR << " " << res.code << std::endl;
+		os << res.ecid << " " << res.isvalid << std::endl;
+		os << TERMCHAR << std::endl;
+		return os;
+	}
+	friend std::istream& operator>>(std::istream& is, ecent_redeem_response& res) {
 		std::string res_str;
 		is >> res_str;
 		if (res_str != RESSTR)

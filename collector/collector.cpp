@@ -142,6 +142,27 @@ int check_ecent(SSL_CTX *ctx, std::string host, std::string port, ecent ec) {
 	}
 }
 
+int redeem_ecent(SSL_CTX *ctx, std::string host, std::string port, ecent ec) {
+	ecent_redeem_request req(ec);
+	std::stringstream sso;
+	sso << req;
+	std::string reqmsg = sso.str();
+
+	std::string resmsg = do_request(ctx, host, port, reqmsg);
+
+	if (resmsg.empty()) return -1;
+
+	std::stringstream ssi(resmsg);
+	ecent_redeem_response res;
+	ssi >> res;
+	if (ssi.fail()) return -2;
+	if (res.isvalid) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
 int main(int argc, char *argv[]) {
 	SSL_library_init();
 	OpenSSL_add_all_algorithms();
@@ -179,23 +200,71 @@ int main(int argc, char *argv[]) {
 			std::cout << "Got " << count << " eCents" << std::endl;
 		} else if (cmd == "ecent_count") {
 			std::cout << "Currently have " << ecents.size() << " ecents" << std::endl;
+		} else if (cmd == "ecent_list") {
+			std::cout << "eCent ids: ";
+			for (auto ec : ecents) {
+				std::cout << ec.ecid << " ";
+			}
+			std::cout << std::endl;
 		} else if (cmd == "check_ecent") {
 			std::string host, port;
-			std::cin >> host >> port;
+			uint64_t id;
+			std::cin >> host >> port >> id;
 			if (host == ".") host = conf.bankhost;
 			if (port == ".") port = conf.bankport;
 			if (ecents.size() < 1) {
 				std::cout << "No ecent to validate" << std::endl;
 			} else {
-				int res = check_ecent(ctx, host, port, ecents.front());
+				ecent check = ecents.front();
+				for (auto ec : ecents) {
+					if (ec.ecid == id) {
+						check = ec;
+						break;
+					}
+				}
+				int res = check_ecent(ctx, host, port, check);
 				if (res == 1) {
-					std::cout << "First ecent is valid" << std::endl;
+					std::cout << "eCent id " << check.ecid << " is valid" << std::endl;
 				} else if (res == 0) {
-					std::cout << "First ecent is INVALID" << std::endl;
+					std::cout << "eCent id " << check.ecid << " is INVALID" << std::endl;
 				} else {
 					std::cout << "Failed to validate eCent with error code " << res << std::endl;
 				}
 			}
+		} else if (cmd == "redeem_ecent") {
+			std::string host, port;
+			uint64_t id;
+			std::cin >> host >> port >> id;
+			if (host == ".") host = conf.bankhost;
+			if (port == ".") port = conf.bankport;
+			if (ecents.size() < 1) {
+				std::cout << "No ecent to redeem" << std::endl;
+			} else {
+				auto it = ecents.begin();
+				for (it = ecents.begin(); it != ecents.end(); ++it) {
+					if ((*it).ecid == id) {
+						break;
+					}
+				}
+				if (it == ecents.end()) it = ecents.begin();
+				int res = redeem_ecent(ctx, host, port, (*it));
+				if (res == 1) {
+					std::cout << "eCent id " << (*it).ecid << " redeemed" << std::endl;
+					ecents.erase(it);
+					save_ecents(conf.ecentfile);
+				} else if (res == 0) {
+					std::cout << "eCent id " << (*it).ecid << " REJECTED" << std::endl;
+				} else {
+					std::cout << "Failed to redeem eCent with error code " << res << std::endl;
+				}
+			}
+		} else {
+			std::cout << "Unknown command. Valid commands:" << std::endl;
+			std::cout << "get_ecents <host> <port> <count>" << std::endl;
+			std::cout << "ecent_count" << std::endl;
+			std::cout << "ecent_list" << std::endl;
+			std::cout << "check_ecent <host> <port> <ecent id>" << std::endl;
+			std::cout << "redeem_ecent <host> <port> <ecent id>" << std::endl;
 		}
 	}
 
